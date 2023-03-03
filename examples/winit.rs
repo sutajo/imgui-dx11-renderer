@@ -20,7 +20,7 @@ use imgui_dx11_renderer::Renderer;
 const WINDOW_WIDTH: f64 = 760.0;
 const WINDOW_HEIGHT: f64 = 760.0;
 
-type Result<T> = std::result::Result<T, windows::core::Error>;
+type Result<T> = windows::core::Result<T>;
 
 fn create_device_with_type(drive_type: D3D_DRIVER_TYPE) -> Result<ID3D11Device> {
     let mut flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
@@ -36,23 +36,24 @@ fn create_device_with_type(drive_type: D3D_DRIVER_TYPE) -> Result<ID3D11Device> 
         D3D11CreateDevice(
             None,
             drive_type,
-            HINSTANCE::default(),
+            None,
             flags,
-            &feature_levels,
+            Some(&feature_levels),
             D3D11_SDK_VERSION,
-            &mut device,
-            &mut fl,
-            &mut None,
-        )
-        .map(|()| device.unwrap())
+            Some(&mut device),
+            Some(&mut fl),
+            Some(&mut None),
+        )?;
     }
+
+    Ok(device.unwrap())
 }
 
 fn create_device() -> Result<ID3D11Device> {
     create_device_with_type(D3D_DRIVER_TYPE_HARDWARE)
 }
 
-fn create_swapchain(device: &ID3D11Device, window: HWND) -> Result<IDXGISwapChain> {
+fn create_swapchain(device: &ID3D11Device, window: windows::Win32::Foundation::HWND) -> Result<IDXGISwapChain> {
     let factory = get_dxgi_factory(device)?;
 
     let sc_desc = DXGI_SWAP_CHAIN_DESC {
@@ -72,7 +73,10 @@ fn create_swapchain(device: &ID3D11Device, window: HWND) -> Result<IDXGISwapChai
         Flags: DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH.0 as u32,
     };
 
-    unsafe { factory.CreateSwapChain(device, &sc_desc) }
+    let mut swapchain = None;
+    unsafe { factory.CreateSwapChain(device, &sc_desc, &mut swapchain).ok()?; }
+
+    Ok(swapchain.unwrap())
 }
 
 fn get_dxgi_factory(device: &ID3D11Device) -> Result<IDXGIFactory2> {
@@ -86,13 +90,14 @@ fn create_render_target(
 ) -> Result<ID3D11RenderTargetView> {
     unsafe {
         let backbuffer: ID3D11Resource = swapchain.GetBuffer(0)?;
-        device.CreateRenderTargetView(&backbuffer, 0 as _)
+        let mut render_target = None;
+        device.CreateRenderTargetView(&backbuffer, None, Some(&mut render_target))?;
+        Ok(render_target.unwrap())
     }
 }
 
 fn main() -> Result<()> {
     let event_loop = EventLoop::new();
-    let mut device_ctx = None;
     let window = WindowBuilder::new()
         .with_title("imgui_dx11_renderer winit example")
         .with_inner_size(LogicalSize { width: WINDOW_WIDTH, height: WINDOW_HEIGHT })
@@ -101,17 +106,15 @@ fn main() -> Result<()> {
 
     let device = create_device()?;
     let swapchain = unsafe { create_swapchain(&device, transmute(window.hwnd()))? };
-    unsafe {
-        device.GetImmediateContext(&mut device_ctx);
-    }
+    let device_ctx= unsafe { device.GetImmediateContext()? };
     let mut target = Some(create_render_target(&swapchain, &device)?);
 
     let mut imgui = Context::create();
     let mut platform = WinitPlatform::init(&mut imgui);
     imgui.set_ini_filename(None);
-    platform.attach_window(imgui.io_mut(), &window, HiDpiMode::Rounded);
+    platform.attach_window(imgui.io_mut(), &window, HiDpiMode::Locked(1.0));
 
-    let hidpi_factor = platform.hidpi_factor();
+    let hidpi_factor = window.scale_factor();
     let font_size = (13.0 * hidpi_factor) as f32;
     imgui.fonts().add_font(&[FontSource::DefaultFontData {
         config: Some(FontConfig { size_pixels: font_size, ..FontConfig::default() }),
@@ -133,15 +136,13 @@ fn main() -> Result<()> {
         },
         Event::RedrawRequested(_) => {
             unsafe {
-                if let Some(ref context) = device_ctx {
-                    context.OMSetRenderTargets(&[target.clone()], None);
-                    context.ClearRenderTargetView(target.as_ref().unwrap(), &0.6);
-                }
+                device_ctx.OMSetRenderTargets(Some(&[target.clone().unwrap()]), None);
+                device_ctx.ClearRenderTargetView(target.as_ref().unwrap(), &0.6);
             }
             let ui = imgui.frame();
-            imgui::Window::new("Hello world")
+            ui.window("Hello world")
                 .size([300.0, 100.0], imgui::Condition::FirstUseEver)
-                .build(&ui, || {
+                .build(|| {
                     ui.text("Hello world!");
                     ui.text("This...is...imgui-rs!");
                     ui.separator();
@@ -151,7 +152,7 @@ fn main() -> Result<()> {
             ui.show_demo_window(&mut true);
 
             platform.prepare_render(&ui, &window);
-            renderer.render(ui.render()).unwrap();
+            renderer.render(imgui.render()).unwrap();
             unsafe {
                 swapchain.Present(1, 0).unwrap();
             }
@@ -167,8 +168,7 @@ fn main() -> Result<()> {
             unsafe {
                 swapchain.ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0).unwrap();
             }
-            let rtv = create_render_target(&swapchain, &device).unwrap();
-            target = Some(rtv);
+            target = create_render_target(&swapchain, &device).ok();
             platform.handle_event(imgui.io_mut(), &window, &event);
         },
         Event::LoopDestroyed => (),
