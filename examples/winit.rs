@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use std::mem::transmute;
 use std::time::Instant;
 
@@ -22,40 +24,19 @@ const WINDOW_HEIGHT: f64 = 760.0;
 
 type Result<T> = windows::core::Result<T>;
 
-fn create_device_with_type(drive_type: D3D_DRIVER_TYPE) -> Result<ID3D11Device> {
+fn d3d11_initialize(
+    window: windows::Win32::Foundation::HWND,
+) -> Result<(ID3D11Device, IDXGISwapChain, ID3D11DeviceContext)> {
+    //Device options
+    let drivertype = D3D_DRIVER_TYPE_HARDWARE;
     let mut flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-
-    if cfg!(debug_assertions) {
+    if true {
         flags |= D3D11_CREATE_DEVICE_DEBUG;
     }
-
-    let mut device = None;
     let feature_levels = [D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_10_0];
-    let mut fl = D3D_FEATURE_LEVEL_11_1;
-    unsafe {
-        D3D11CreateDevice(
-            None,
-            drive_type,
-            None,
-            flags,
-            Some(&feature_levels),
-            D3D11_SDK_VERSION,
-            Some(&mut device),
-            Some(&mut fl),
-            Some(&mut None),
-        )?;
-    }
+    let mut feature_level = D3D_FEATURE_LEVEL_11_1;
 
-    Ok(device.unwrap())
-}
-
-fn create_device() -> Result<ID3D11Device> {
-    create_device_with_type(D3D_DRIVER_TYPE_HARDWARE)
-}
-
-fn create_swapchain(device: &ID3D11Device, window: windows::Win32::Foundation::HWND) -> Result<IDXGISwapChain> {
-    let factory = get_dxgi_factory(device)?;
-
+    //Swapchain options
     let sc_desc = DXGI_SWAP_CHAIN_DESC {
         BufferDesc: DXGI_MODE_DESC {
             Width: 0,
@@ -73,15 +54,28 @@ fn create_swapchain(device: &ID3D11Device, window: windows::Win32::Foundation::H
         Flags: DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH.0 as u32,
     };
 
+    //Results
+    let mut device = None;
     let mut swapchain = None;
-    unsafe { factory.CreateSwapChain(device, &sc_desc, &mut swapchain).ok()?; }
+    let mut device_context = None;
 
-    Ok(swapchain.unwrap())
+    unsafe {
+        D3D11CreateDeviceAndSwapChain(
+            None,
+            drivertype,
+            None,
+            flags,
+            Some(&feature_levels),
+            D3D11_SDK_VERSION,
+            Some(&sc_desc),
+            Some(&mut swapchain),
+            Some(&mut device),
+            Some(&mut feature_level),
+            Some(&mut device_context),
+        )?;
 }
 
-fn get_dxgi_factory(device: &ID3D11Device) -> Result<IDXGIFactory2> {
-    let dxdevice = device.cast::<IDXGIDevice>()?;
-    unsafe { dxdevice.GetAdapter()?.GetParent() }
+    Ok((device.unwrap(), swapchain.unwrap(), device_context.unwrap()))
 }
 
 fn create_render_target(
@@ -104,9 +98,8 @@ fn main() -> Result<()> {
         .build(&event_loop)
         .unwrap();
 
-    let device = create_device()?;
-    let swapchain = unsafe { create_swapchain(&device, transmute(window.hwnd()))? };
-    let device_ctx= unsafe { device.GetImmediateContext()? };
+    let (device, swapchain, device_ctx) = d3d11_initialize(HWND(window.hwnd()))?;
+
     let mut target = Some(create_render_target(&swapchain, &device)?);
 
     let mut imgui = Context::create();
@@ -120,7 +113,7 @@ fn main() -> Result<()> {
         config: Some(FontConfig { size_pixels: font_size, ..FontConfig::default() }),
     }]);
 
-    let mut renderer = unsafe { Renderer::new(&mut imgui, &device)? };
+    let mut renderer = Renderer::new(&mut imgui, &device)?;
     let mut last_frame = Instant::now();
 
     event_loop.run(move |event, _, control_flow| match event {
@@ -137,18 +130,21 @@ fn main() -> Result<()> {
         Event::RedrawRequested(_) => {
             unsafe {
                 device_ctx.OMSetRenderTargets(Some(&[target.clone().unwrap()]), None);
-                device_ctx.ClearRenderTargetView(target.as_ref().unwrap(), &0.6);
+                device_ctx.ClearRenderTargetView(
+                    target.as_ref().unwrap(),
+                    &[0.0 as f32, 0.0, 1.0, 1.0] as *const f32,
+                );
             }
             let ui = imgui.frame();
-            ui.window("Hello world")
-                .size([300.0, 100.0], imgui::Condition::FirstUseEver)
-                .build(|| {
+            ui.window("Hello world").size([300.0, 100.0], imgui::Condition::FirstUseEver).build(
+                || {
                     ui.text("Hello world!");
                     ui.text("This...is...imgui-rs!");
                     ui.separator();
                     let mouse_pos = ui.io().mouse_pos;
                     ui.text(format!("Mouse Position: ({:.1},{:.1})", mouse_pos[0], mouse_pos[1]));
-                });
+                },
+            );
             ui.show_demo_window(&mut true);
 
             platform.prepare_render(&ui, &window);

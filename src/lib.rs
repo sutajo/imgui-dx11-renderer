@@ -210,7 +210,13 @@ impl Renderer {
 
         ctx.RSSetViewports(Some(&[vp]));
         ctx.IASetInputLayout(&self.input_layout);
-        ctx.IASetVertexBuffers(0, 1, Some(&Some(self.vertex_buffer.get_buf().clone())), Some(&stride), Some(&0));
+        ctx.IASetVertexBuffers(
+            0,
+            1,
+            Some(&Some(self.vertex_buffer.get_buf().clone())),
+            Some(&stride),
+            Some(&0),
+        );
         ctx.IASetIndexBuffer(self.index_buffer.get_buf(), draw_fmt, 0);
         ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         ctx.VSSetShader(&self.vertex_shader, None);
@@ -396,7 +402,7 @@ impl Renderer {
                 SemanticIndex: 0,
                 Format: DXGI_FORMAT_R32G32_FLOAT,
                 InputSlot: 0,
-                AlignedByteOffset: 0,
+                AlignedByteOffset: D3D11_APPEND_ALIGNED_ELEMENT,
                 InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
                 InstanceDataStepRate: 0,
             },
@@ -405,7 +411,7 @@ impl Renderer {
                 SemanticIndex: 0,
                 Format: DXGI_FORMAT_R32G32_FLOAT,
                 InputSlot: 0,
-                AlignedByteOffset: 8,
+                AlignedByteOffset: D3D11_APPEND_ALIGNED_ELEMENT,
                 InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
                 InstanceDataStepRate: 0,
             },
@@ -414,7 +420,7 @@ impl Renderer {
                 SemanticIndex: 0,
                 Format: DXGI_FORMAT_R8G8B8A8_UNORM,
                 InputSlot: 0,
-                AlignedByteOffset: 16,
+                AlignedByteOffset: D3D11_APPEND_ALIGNED_ELEMENT,
                 InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
                 InstanceDataStepRate: 0,
             },
@@ -549,26 +555,7 @@ struct StateBackup {
 impl StateBackup {
     unsafe fn backup(context: Option<ID3D11DeviceContext>) -> Self {
         let mut result = Self::default();
-
         let ctx = context.as_ref().unwrap();
-        ctx.RSGetScissorRects(&mut 16, Some(&mut result.scissor_rects));
-        ctx.RSGetViewports(&mut 16, Some(&mut result.viewports));
-        result.rasterizer_state = ctx.RSGetState().ok();
-        ctx.OMGetBlendState(
-            Some(&mut result.blend_state),
-            Some(&mut result.blend_factor),
-            Some(&mut result.sample_mask),
-        );
-        ctx.OMGetDepthStencilState(
-            Some(&mut result.depth_stencil_state),
-            Some(&mut result.stencil_ref),
-        );
-        ctx.PSGetShaderResources(0, Some(&mut result.shader_resource));
-        ctx.PSGetSamplers(0, Some(&mut result.sampler));
-        ctx.PSGetShader(&mut result.ps_shader, Some(&mut result.ps_instances), Some(&mut 256));
-        ctx.VSGetShader(&mut result.vs_shader, Some(&mut result.vs_instances), Some(&mut 256));
-        ctx.VSGetConstantBuffers(0, Some(&mut result.constant_buffer));
-        ctx.GSGetShader(&mut result.gs_shader, Some(&mut result.gs_instances), Some(&mut 256));
         result.topology = ctx.IAGetPrimitiveTopology();
         ctx.IAGetIndexBuffer(
             Some(&mut result.index_buffer),
@@ -583,6 +570,24 @@ impl StateBackup {
             Some(&mut result.vertex_buffer_offset),
         );
         result.input_layout = ctx.IAGetInputLayout().ok();
+        ctx.VSGetShader(&mut result.vs_shader, Some(&mut result.vs_instances), Some(&mut 256));
+        ctx.VSGetConstantBuffers(0, Some(&mut result.constant_buffer));
+        ctx.GSGetShader(&mut result.gs_shader, Some(&mut result.gs_instances), Some(&mut 256));
+        ctx.RSGetViewports(&mut 1, Some(&mut result.viewports));
+        ctx.RSGetScissorRects(&mut 1, Some(&mut result.scissor_rects));
+        result.rasterizer_state = ctx.RSGetState().ok();
+        ctx.PSGetShaderResources(0, Some(&mut result.shader_resource));
+        ctx.PSGetSamplers(0, Some(&mut result.sampler));
+        ctx.PSGetShader(&mut result.ps_shader, Some(&mut result.ps_instances), Some(&mut 256));
+        ctx.OMGetBlendState(
+            Some(&mut result.blend_state),
+            Some(&mut result.blend_factor),
+            Some(&mut result.sample_mask),
+        );
+        ctx.OMGetDepthStencilState(
+            Some(&mut result.depth_stencil_state),
+            Some(&mut result.stencil_ref),
+        );
         result.context = context;
         result
     }
@@ -593,6 +598,8 @@ impl StateBackup {
 
     pub fn restore(&mut self) {
         unsafe {
+            if self.context.is_none() { return };
+
             let ctx = self.context.as_ref().unwrap();
 
             ctx.RSSetScissorRects(Some(&[self.scissor_rects]));
@@ -602,8 +609,14 @@ impl StateBackup {
             ctx.OMSetDepthStencilState(self.depth_stencil_state.as_ref(), self.stencil_ref);
             ctx.PSSetShaderResources(0, Some(&Self::filter_none(&self.shader_resource)));
             ctx.PSSetSamplers(0, Some(&Self::filter_none(&self.sampler)));
-            ctx.PSSetShader(self.ps_shader.as_ref(), self.ps_instances.as_ref().map(slice::from_ref));
-            ctx.VSSetShader(self.vs_shader.as_ref(), self.vs_instances.as_ref().map(slice::from_ref));
+            ctx.PSSetShader(
+                self.ps_shader.as_ref(),
+                self.ps_instances.as_ref().map(slice::from_ref),
+            );
+            ctx.VSSetShader(
+                self.vs_shader.as_ref(),
+                self.vs_instances.as_ref().map(slice::from_ref),
+            );
             ctx.VSSetConstantBuffers(0, Some(&Self::filter_none(&self.constant_buffer)));
             ctx.GSSetShader(
                 self.gs_shader.as_ref(),
@@ -627,8 +640,7 @@ impl StateBackup {
     }
 }
 
-impl Drop for StateBackup
-{
+impl Drop for StateBackup {
     fn drop(&mut self) {
         self.restore();
     }
