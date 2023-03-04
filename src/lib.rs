@@ -195,8 +195,8 @@ impl Renderer {
         let vp = D3D11_VIEWPORT {
             TopLeftX: 0.0,
             TopLeftY: 0.0,
-            Width: draw_data.display_size[0],
-            Height: draw_data.display_size[1],
+            Width: draw_data.display_size[0] * draw_data.framebuffer_scale[0],
+            Height: draw_data.display_size[1] * draw_data.framebuffer_scale[1],
             MinDepth: 0.0,
             MaxDepth: 1.0,
         };

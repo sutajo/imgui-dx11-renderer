@@ -104,10 +104,11 @@ fn main() -> Result<()> {
 
     let mut imgui = Context::create();
     let mut platform = WinitPlatform::init(&mut imgui);
+    
     imgui.set_ini_filename(None);
-    platform.attach_window(imgui.io_mut(), &window, HiDpiMode::Locked(1.0));
+    platform.attach_window(imgui.io_mut(), &window, HiDpiMode::Default);
 
-    let hidpi_factor = window.scale_factor();
+    let hidpi_factor = platform.hidpi_factor();
     let font_size = (13.0 * hidpi_factor) as f32;
     imgui.fonts().add_font(&[FontSource::DefaultFontData {
         config: Some(FontConfig { size_pixels: font_size, ..FontConfig::default() }),
